@@ -1,6 +1,6 @@
 # Milestone Project 
 
-## Exploratory Tex Analysis as part of the Coursera's Capstone project. 
+#### Exploratory text analysis as part of Coursera's Capstone project. 
 
 ## Contents
 - `README.md`
