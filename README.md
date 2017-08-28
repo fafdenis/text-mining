@@ -1,4 +1,4 @@
-# Milestone Project 
+# Milestone Report
 
 ### Exploratory text analysis as part of Coursera's Capstone project. 
 
