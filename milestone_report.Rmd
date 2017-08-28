@@ -1,0 +1,280 @@
+---
+title: "Milestone Report"
+author: "Stephanie Denis"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include = FALSE}
+# Preamble
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, results = "hide", comment = " ")
+```
+
+## Synopsis
+The Milestone Report is part of the Capstone project for Coursera's Data Science Specialization. The main objective of this report is to conduct exploratory text analysis in preparation for building a text prediction model. In this analysis, I look for the most frequent words, which I've extracted from a combination of printed documents, i.e. blogs, news articles and tweets. I'm also interested in the most common occurrences of word sequences, called n-grams, where n represents the number of sequences from 1 to 4. These preliminary findings will provide me with a baseline for building my text prediction model. 
+
+```{r load-files}
+# Set working directory
+setwd("~/Desktop/Rprogramming/10_Capstone/")
+
+# Load files
+blogs <- readLines(con <- file("./data/final/en_US/en_US.blogs.txt"), encoding = "UTF-8", skipNul = TRUE)
+close(con)
+news <- readLines(con <- file("./data/final/en_US/en_US.news.txt"), encoding = "UTF-8", skipNul = TRUE)
+close(con)
+twitter <- readLines(con <- file("./data/final/en_US/en_US.twitter.txt"), encoding = "UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+# Load libraries
+library(knitr); library(kableExtra); library(dplyr); library(plyr); library(ggplot2);
+library(stringi); library(tm); library(SnowballC); library(quanteda); 
+library(wordcloud); library(RColorBrewer)
+```
+
+## Summary Statistics
+The table below shows the basic summary statics obtained from the raw files. File sizes range from 159.39 MB to 200.42 MB with 899,288 to 2,360,148 lines. The twitter file has the most lines but the fewest characters, reflecting the 140-character limit per tweet. Blogs have the most words per line, followed by news articles and tweets. On average, words have between 5 and 6 characters. 
+
+```{r basic-stats, results = "unhide"}
+# File size in MB
+size_blogs <- file.info("./data/final/en_US/en_US.blogs.txt")$size/1024^2
+size_news <- file.info("./data/final/en_US/en_US.news.txt")$size/1024^2
+size_twitter <- file.info("./data/final/en_US/en_US.twitter.txt")$size/1024^2
+
+# Count total number of lines
+lines_blogs <- length(blogs)
+lines_news <- length(news) 
+lines_twitter <- length(twitter)
+
+# Max characters per line
+maxchars_blogs <- max(nchar(blogs))
+maxchars_news <- max(nchar(news)) 
+maxchars_twitter <- max(nchar(twitter))
+
+# Count total number of characters
+chars_blogs <- sum(nchar(blogs)) 
+chars_news <- sum(nchar(news))
+chars_twitter <- sum(nchar(twitter))
+
+# Count total number of words
+words_blogs <- sum(stri_count(blogs, regex = "\\S+")) 
+words_news <- sum(stri_count(news, regex = "\\S+"))
+words_twitter <- sum(stri_count(twitter, regex = "\\S+"))
+
+# Average character per word
+avgchars_blogs <- chars_blogs/words_blogs
+avgchars_news <- chars_news/words_news
+avgchars_twitter <- chars_twitter/words_twitter
+
+# Average word per line
+avgwords_blogs <- words_blogs/lines_blogs
+avgwords_news <- words_news/lines_news
+avgwords_twitter <- words_twitter/lines_twitter
+
+# Data frame with summary statistics
+dt <- (data.frame(
+        File.Name = c("Blogs", "News", "Twitter"),
+        Size.MB = format(c(size_blogs, size_news, size_twitter), digits = 5),
+        Total.Lines = format(c(lines_blogs, lines_news, lines_twitter), big.mark = ","),
+        Total.Words = format(c(words_blogs, words_news, words_twitter), big.mark = ","),
+        Max.Chars = format(c(maxchars_blogs, maxchars_news, maxchars_twitter), big.mark = ",", digits = 5),
+        Avg.Chars = format(c(avgchars_blogs, avgchars_news, avgchars_twitter), digits = 3),
+        Avg.Words = format(c(avgwords_blogs, avgwords_news, avgwords_twitter), digits = 4)))
+       
+# Table with summary statistics
+kable(dt) %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+# Remove from Global Environment
+rm(size_blogs, size_news, size_twitter)
+rm(lines_blogs, lines_news, lines_twitter)
+rm(words_blogs, words_news, words_twitter)
+rm(chars_blogs, chars_news, chars_twitter)
+rm(maxchars_blogs, maxchars_news, maxchars_twitter)
+rm(avgchars_blogs, avgchars_news, avgchars_twitter)
+rm(avgwords_blogs, avgwords_news, avgwords_twitter)
+```
+
+## Data Pre-processing 
+Next, I do a bit of cleaning and transform the text document into a matrix document with which I can do further analysis on the frequency of terms and word sequences. I start by removing all weird characters from the raw text files, then I take a random sample of 1 percent of text from each file and save them into a data frame called `sampleData`. 
+
+Next, I clean the corpus file by transforming all texts to lower case, then removing all punctuation and numbers, stripping out all white space and removing English stopwords, such as "and", "the", "to", etc. This last step, prevents the crowding out other more meaningful words in the text.
+
+```{r sampling-data}
+# Set seed for reproducibility
+set.seed(123)
+
+# Generate random sample of N characters
+sampleData <- c(sample(blogs, length(blogs) * 0.01),
+                sample(news, length(news) * 0.01),
+                sample(twitter, length(twitter) * 0.01))
+
+# Functions to clean text
+removeURL <- function(x) gsub("http[[:alnum:]]*", "", x)
+removeRT <- function(x) gsub("RT @[a-z,A-Z]*: ", "", x)
+removeHashtag <- function(x) gsub("#[a-z,A-Z]*", "", x)
+removeOther <- function(x) gsub("@[a-z,A-Z]*", "", x)
+
+# Clean file
+corpus <- Corpus(VectorSource(sampleData))
+corpus <- tm_map(corpus, removeURL)
+corpus <- tm_map(corpus, removeRT)
+corpus <- tm_map(corpus, removeHashtag)
+corpus <- tm_map(corpus, removeOther)
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeWords, c("lol", "rt"))
+corpus <- tm_map(corpus, stripWhitespace)
+corpus_copy <- corpus
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+#corpus <- tm_map(corpus, stemDocument)
+```
+
+Next, I convert the corpus file into a term document matrix (TDM) to get the frequency of terms in rows and the collection of documents in which they occur in columns. The TDM contains 55,132 terms and 42,695 documents with a sparsity percentage of 100 percent. The sparsity is quite high and is most likely due to a large number of rare terms and misspellings that are present throughout the documents. 
+
+```{r term-freq, results = "unhide"}
+# Term document matrix
+tdm <- TermDocumentMatrix(corpus)
+tdm
+```
+
+To make the TDM more manageable, I decided to reduce the dimensionality by removing sparse terms that fall within the 0.1 percentile of the distribution. As a result, I end up with 2,092 terms and 42,695 documents. The sparsity is still at 100% but the dimensionality of the matrix has been reduced. 
+
+```{r sparse-terms, results = "unhide"}
+# Remove sparse terms
+tdm2 <- removeSparseTerms(tdm, 0.999)
+tdm2
+```
+
+## Word Cloud
+A great way to visualize the frequency of words in a document is through a Word Cloud. The most common words appear bigger in size, i.e. "one", "will", "said", "just", "like".
+
+```{r word-cloud, results = "unhide"}
+# World Cloud
+set.seed(478)
+m <- as.matrix(tdm2)
+v <- sort(rowSums(m), decreasing = TRUE)
+d <- data.frame(word = names(v), freq = v)
+pal <- brewer.pal(8, "Dark2")
+pal <- pal[-(1:2)]
+wordcloud(d$word, d$freq, 
+          max.words = 100,
+          random.order = FALSE,
+          rot.per = 0.35,
+          colors = pal)
+rm(m, v, d, pal)
+```
+
+## N-gram Models
+The n-gram models makes it possible to predict words that are most likely to appear together in our corpus. Below are examples of frequent word sequences extracted from the "cleaned" corpus with the stop words:
+
+n-grams       | word sequences
+------------- | ------------------------------------------------------------------------------
+bigram        | "in the", "of the", "to the", "for the", "on the"
+trigram       | "one of the", "a lot of", "thanks for the", "to be a",  "going to be"
+four-gram     | "the rest of the", "thanks for the follow", "the end of the", "is going to be", "for the first time"
+
+The plots below show the top 20 frequent word combinations. As illustrated below, we can see that bigrams have the most word combinations, while four-grams have considerably fewer occurrences.
+
+```{r ngram-models}
+# Moving tm corpus to quanteda corpus
+corpus2 <- corpus(corpus_copy$content, docvars = corpus_copy$dmeta)
+
+# Storing n-grams
+ngram2 <- dfm(corpus2, ngrams = 2, concatenator = " ")
+ngram3 <- dfm(corpus2, ngrams = 3, concatenator = " ")
+ngram4 <- dfm(corpus2, ngrams = 4, concatenator = " ")
+
+# Store freqent n-grams in data frames
+df <- as.data.frame(as.matrix(docfreq(ngram2)))
+names(df)[1] <- "Frequency"
+df_sort <- sort(rowSums(df), decreasing = TRUE)
+df_bigrams <- data.frame(Term = names(df_sort), Frequency = df_sort)
+rm(df, df_sort)
+
+df <- as.data.frame(as.matrix(docfreq(ngram3)))
+names(df)[1] <- "Frequency"
+df_sort <- sort(rowSums(df), decreasing = TRUE)
+df_trigrams <- data.frame(Term = names(df_sort), Frequency = df_sort)
+rm(df, df_sort)
+
+df <- as.data.frame(as.matrix(docfreq(ngram4)))
+names(df)[1] <- "Frequency"
+df_sort <- sort(rowSums(df), decreasing = TRUE)
+df_fourgrams <- data.frame(Term = names(df_sort), Frequency = df_sort)
+rm(df, df_sort)
+```
+
+```{r ngram-plots, result = "unhide"}
+# Plot ngrams
+ggplot(df_bigrams[1:20,], aes(x = reorder(Term, Frequency), y = Frequency)) + 
+        geom_bar(fill="steelblue", stat="identity") + 
+        coord_flip() +
+        ggtitle("Top 20 Bigrams") + 
+        labs(x = "", y = "Count") 
+
+ggplot(df_trigrams[1:20,], aes(x = reorder(Term, Frequency), y = Frequency)) + 
+        geom_bar(fill="steelblue", stat = "identity") + 
+        coord_flip() +
+        ggtitle("Top 20 Trigrams") + 
+        labs(x = "", y = "Count") 
+
+ggplot(df_fourgrams[1:20,], aes(x = reorder(Term, Frequency), y = Frequency)) + 
+        geom_bar(fill="steelblue", stat = "identity") + 
+        coord_flip() +
+        ggtitle("Top 20 Four-grams") + 
+        labs(x = "", y = "Count") 
+```
+
+## Conclusion 
+In this analysis, I extracted text from three documents in English, i.e. tweets, blogs, and news articles. I did some exploratory text analysis to find out the size and characteristics of each document. I also did some preprocessing where I cleaned a sample of the text documents. I removed features that could hamper the text mining process. More specifically, I transformed all text to lower case, I removed numbers, punctuations, stopwords, hashtags, URLs, etc. With the cleaned document, I illustrated the most common words in a Word Cloud, then I calculated the frequency of terms and their occurrences in pairs of 2, 3, and 4. I was able to assemble the top 20 most frequent n-grams, which I illustrated in bar graphs. 
+
+## Next Steps
+I plan to build a text prediction model based on the probability of word pairings given by the n-grams. But before building my model, I will need to do a few more things:
+
+1. Create a training and test dataset.
+2. Explore different smoothing models recommended for predicting text, i.e. Katz-backoff, Knezer-Ney, Markov Chain.
+4. Apply chosen model to training set.
+5. Test model using test set.
+
+## Appendix: R Code
+
+#### 1. Preamble
+```{r ref.label = "setup", echo = TRUE, eval = FALSE}
+```
+
+#### 2. Loading files and libraries
+```{r ref.label = "load-files", echo = TRUE, eval = FALSE}
+```
+
+#### 3. Calculating basic summary statistics
+```{r ref.label = "basic-stats", echo = TRUE, eval = FALSE}
+```
+
+#### 4. Generating and cleaning sample text document
+```{r ref.label = "sampling-data", echo = TRUE, eval = FALSE}
+```
+
+#### 5. Calculating frequency of terms
+```{r ref.label = "term-freq", echo = TRUE, eval = FALSE}
+```
+
+#### 6. Removing sparse terms
+```{r ref.label = "sparse-terms", echo = TRUE, eval = FALSE}
+```
+
+#### 7. Generating word cloud with most frequent terms
+```{r ref.label = "word-cloud", echo = TRUE, eval = FALSE}
+```
+
+#### 8. Generating n-grams
+```{r ref.label = "ngram-models", echo = TRUE, eval = FALSE}
+```
+
+#### 9. Plotting top 20 n-grams
+```{r ref.label = "ngram-plots", echo = TRUE, eval = FALSE}
+```
